@@ -14,7 +14,10 @@ self-hosted by the nonprofit.
 - `recon_check.py` — CLI that runs the automatable parts of the pre-call
   recon checklist against a domain and produces a markdown report:
   cloaking check (Googlebot UA vs. normal UA diff), spam-term grep,
-  robots.txt + sitemap fetch/analysis, optional Safe Browsing API check.
+  robots.txt + sitemap fetch/analysis, optional Safe Browsing API check,
+  WordPress exposure (xmlrpc.php, user enumeration, exposed version),
+  security headers (CSP/HSTS/X-Frame-Options/X-Content-Type-Options),
+  SSL certificate issuer/validity, and DNS (A/MX/NS records).
 - `spam_terms.txt` — default wordlist for the spam grep (edit/extend freely,
   or point `--wordlist` at your own per-engagement list).
 - `templates/reconsideration_request.md` — fill-in-the-blanks Google
@@ -41,7 +44,13 @@ python3 recon_check.py seacc.org --output seacc-recon-report.md
 use a file, `export GOOGLE_SAFE_BROWSING_API_KEY=your-key-here` works too
 and takes priority over `.env`.
 
-No dependencies beyond the Python standard library — nothing to install.
+Full walkthrough (GCP project setup, key restrictions, common 403 errors):
+[`docs/safe-browsing-api-setup.md`](docs/safe-browsing-api-setup.md).
+
+No Python dependencies beyond the standard library. MX/NS lookups shell out
+to the `dig` binary (present by default on macOS/most Linux); if it's
+missing, those two fields just note how to check manually — everything
+else still runs fine.
 
 ## What this does NOT automate (do these manually, they need a browser/login)
 

@@ -20,6 +20,9 @@ import difflib
 import json
 import os
 import re
+import socket
+import ssl
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -205,7 +208,112 @@ def check_safe_browsing(domain, api_key):
         return {"error": str(e)}
 
 
-def render_report(domain, cloaking, robots, safe_browsing):
+SECURITY_HEADERS = [
+    "Content-Security-Policy",
+    "Strict-Transport-Security",
+    "X-Frame-Options",
+    "X-Content-Type-Options",
+]
+
+
+def check_security_headers(domain):
+    url = f"https://{domain}/"
+    req = urllib.request.Request(url, headers={"User-Agent": NORMAL_UA})
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            headers = resp.headers
+    except urllib.error.HTTPError as e:
+        headers = e.headers
+    except (urllib.error.URLError, OSError) as e:
+        return {"error": str(e)}
+
+    present = {h: headers.get(h) for h in SECURITY_HEADERS if headers.get(h)}
+    missing = [h for h in SECURITY_HEADERS if not headers.get(h)]
+    return {"present": present, "missing": missing}
+
+
+def check_ssl_certificate(domain):
+    ctx = ssl.create_default_context()
+    try:
+        with socket.create_connection((domain, 443), timeout=TIMEOUT) as sock:
+            with ctx.wrap_socket(sock, server_hostname=domain) as ssock:
+                cert = ssock.getpeercert()
+    except (ssl.SSLError, OSError, socket.timeout) as e:
+        return {"error": str(e)}
+
+    issuer = dict(x[0] for x in cert.get("issuer", []))
+    return {
+        "issuer": issuer.get("organizationName") or issuer.get("commonName") or "unknown",
+        "not_before": cert.get("notBefore"),
+        "not_after": cert.get("notAfter"),
+    }
+
+
+def check_dns(domain):
+    result = {}
+    try:
+        result["a_records"] = sorted(
+            {info[4][0] for info in socket.getaddrinfo(domain, None, socket.AF_INET)}
+        )
+    except OSError as e:
+        result["a_records_error"] = str(e)
+
+    for record_type, key in (("MX", "mx_records"), ("NS", "ns_records")):
+        try:
+            proc = subprocess.run(
+                ["dig", "+short", record_type, domain],
+                capture_output=True,
+                timeout=TIMEOUT,
+                text=True,
+            )
+            if proc.returncode == 0:
+                result[key] = [line for line in proc.stdout.strip().splitlines() if line]
+            else:
+                result[f"{key}_error"] = proc.stderr.strip() or "dig returned a nonzero exit code"
+        except FileNotFoundError:
+            result[f"{key}_error"] = (
+                "`dig` not found on this machine — install bind-utils/dnsutils "
+                "(or run `dig MX/NS " + domain + "` manually) to enable this check"
+            )
+        except subprocess.TimeoutExpired:
+            result[f"{key}_error"] = "dig timed out"
+    return result
+
+
+def check_wp_exposure(domain):
+    base = f"https://{domain}"
+    result = {}
+
+    status, html = fetch(f"{base}/", NORMAL_UA)
+    if status == 200:
+        m = re.search(r'<meta name="generator" content="([^"]+)"', html, re.I)
+        result["generator_tag"] = m.group(1) if m else None
+
+    status, body = fetch(f"{base}/xmlrpc.php", NORMAL_UA)
+    result["xmlrpc_status"] = status
+    result["xmlrpc_exposed"] = status == 200 and "XML-RPC server accepts POST requests only" in body
+
+    status, body = fetch(f"{base}/wp-json/wp/v2/users", NORMAL_UA)
+    result["wp_json_users_status"] = status
+    result["wp_json_users_exposed"] = False
+    result["wp_json_usernames"] = []
+    if status == 200:
+        try:
+            users = json.loads(body)
+            if isinstance(users, list) and users:
+                result["wp_json_users_exposed"] = True
+                result["wp_json_usernames"] = [u.get("slug") for u in users][:10]
+        except json.JSONDecodeError:
+            pass
+
+    status, _ = fetch(f"{base}/readme.html", NORMAL_UA)
+    result["readme_html_status"] = status
+    result["readme_html_exposed"] = status == 200
+
+    return result
+
+
+def render_report(domain, cloaking, robots, safe_browsing, security_headers, ssl_cert, dns, wp_exposure):
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = []
     lines.append(f"# Recon report: {domain}")
@@ -269,6 +377,67 @@ def render_report(domain, cloaking, robots, safe_browsing):
         lines.append(f"- Verdict: **{verdict}**")
     lines.append("")
 
+    lines.append("## WordPress exposure")
+    if "error" in wp_exposure:
+        lines.append(f"- ⚠️ {wp_exposure['error']}")
+    else:
+        if wp_exposure.get("generator_tag"):
+            lines.append(f"- WP version exposed via generator tag: `{wp_exposure['generator_tag']}`")
+        else:
+            lines.append("- No `generator` meta tag found (version not exposed that way)")
+        flag = "🚩 exposed" if wp_exposure["xmlrpc_exposed"] else "✅ not exposed"
+        lines.append(f"- xmlrpc.php: {flag} (status={wp_exposure['xmlrpc_status']})")
+        flag = "🚩 exposed" if wp_exposure["wp_json_users_exposed"] else "✅ not exposed"
+        lines.append(f"- wp-json user enumeration: {flag} (status={wp_exposure['wp_json_users_status']})")
+        if wp_exposure["wp_json_usernames"]:
+            lines.append(f"  - Usernames leaked: {wp_exposure['wp_json_usernames']}")
+        flag = "🚩 reachable" if wp_exposure["readme_html_exposed"] else "✅ not reachable"
+        lines.append(f"- readme.html: {flag} (status={wp_exposure['readme_html_status']})")
+    lines.append("")
+
+    lines.append("## Security headers")
+    if "error" in security_headers:
+        lines.append(f"- ⚠️ {security_headers['error']}")
+    else:
+        for header, value in security_headers["present"].items():
+            lines.append(f"- ✅ {header}: `{value}`")
+        for header in security_headers["missing"]:
+            lines.append(f"- 🚩 missing: {header}")
+    lines.append("")
+
+    lines.append("## SSL certificate")
+    if "error" in ssl_cert:
+        lines.append(f"- ⚠️ {ssl_cert['error']}")
+    else:
+        lines.append(f"- Issuer: {ssl_cert['issuer']}")
+        lines.append(f"- Valid: {ssl_cert['not_before']} → {ssl_cert['not_after']}")
+        lines.append(
+            "- Note: a normal renewal looks identical to a compromise-driven "
+            "reissue here — cross-check the validity start date against the "
+            "hack date and who currently controls the cert (org vs. host/CDN)."
+        )
+    lines.append("")
+
+    lines.append("## DNS")
+    if dns.get("a_records"):
+        lines.append(f"- A records: {dns['a_records']}")
+    elif "a_records_error" in dns:
+        lines.append(f"- ⚠️ A record lookup failed: {dns['a_records_error']}")
+    if "mx_records" in dns:
+        lines.append(f"- MX records: {dns['mx_records'] or 'none'}")
+    elif "mx_records_error" in dns:
+        lines.append(f"- ⚠️ {dns['mx_records_error']}")
+    if "ns_records" in dns:
+        lines.append(f"- NS records: {dns['ns_records'] or 'none'}")
+    elif "ns_records_error" in dns:
+        lines.append(f"- ⚠️ {dns['ns_records_error']}")
+    lines.append(
+        "- Compare these against what the org/host expects — an unrecognized "
+        "NS or MX entry can mean the hack extended to DNS/registrar level, "
+        "not just the WordPress install."
+    )
+    lines.append("")
+
     lines.append("## Manual checks — do these before the call (script can't automate)")
     lines.append(f"- [ ] Incognito: `site:{domain}` — scan every indexed URL for junk terms/languages")
     lines.append(f"- [ ] Incognito: search the org's name, note where they actually rank")
@@ -301,8 +470,15 @@ def main():
     cloaking = check_cloaking(domain, terms)
     robots = check_robots_and_sitemaps(domain, terms)
     safe_browsing = check_safe_browsing(domain, args.safe_browsing_key)
+    security_headers = check_security_headers(domain)
+    ssl_cert = check_ssl_certificate(domain)
+    dns = check_dns(domain)
+    wp_exposure = check_wp_exposure(domain)
 
-    report = render_report(domain, cloaking, robots, safe_browsing)
+    report = render_report(
+        domain, cloaking, robots, safe_browsing,
+        security_headers, ssl_cert, dns, wp_exposure,
+    )
 
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
