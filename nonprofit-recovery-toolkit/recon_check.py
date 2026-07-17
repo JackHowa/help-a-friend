@@ -173,6 +173,44 @@ def check_robots_and_sitemaps(domain, terms):
     return result
 
 
+def check_pagespeed(domain, api_key, strategy="mobile"):
+    if not api_key:
+        return None
+    endpoint = (
+        "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+        f"?url=https://{domain}&strategy={strategy}&key={api_key}"
+        "&category=performance&category=accessibility"
+        "&category=best-practices&category=seo"
+    )
+    try:
+        req = urllib.request.Request(endpoint, headers={"User-Agent": NORMAL_UA})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError) as e:
+        body = e.read().decode("utf-8", errors="replace") if hasattr(e, "read") else str(e)
+        return {"error": body[:300]}
+
+    lighthouse = data.get("lighthouseResult", {})
+    categories = {
+        name: round(cat["score"] * 100)
+        for name, cat in lighthouse.get("categories", {}).items()
+    }
+    audits = lighthouse.get("audits", {})
+    metrics = {}
+    for key, label in (
+        ("first-contentful-paint", "First Contentful Paint"),
+        ("largest-contentful-paint", "Largest Contentful Paint"),
+        ("total-blocking-time", "Total Blocking Time"),
+        ("cumulative-layout-shift", "Cumulative Layout Shift"),
+        ("speed-index", "Speed Index"),
+    ):
+        val = audits.get(key, {}).get("displayValue")
+        if val:
+            metrics[label] = val
+
+    return {"strategy": strategy, "categories": categories, "metrics": metrics}
+
+
 def check_safe_browsing(domain, api_key):
     if not api_key:
         return None
@@ -313,7 +351,75 @@ def check_wp_exposure(domain):
     return result
 
 
-def render_report(domain, cloaking, robots, safe_browsing, security_headers, ssl_cert, dns, wp_exposure):
+MAX_SUBDOMAINS_CHECKED = 25
+
+# CNAME targets known to be reusable by anyone if the DNS record is left
+# dangling after the org stops using the service — the classic subdomain
+# takeover pattern. Heuristic only: a match means "worth verifying you
+# still control this," not a confirmed vulnerability.
+TAKEOVER_PRONE_CNAME_PATTERNS = [
+    "github.io", "herokuapp.com", "s3.amazonaws.com", "s3-website",
+    "azurewebsites.net", "cloudfront.net", "unbouncepages.com",
+    "wordpress.com", "shopify.com", "myshopify.com", "surge.sh",
+    "bitbucket.io", "wpengine.com", "fastly.net", "zendesk.com",
+    "webflow.io", "squarespace.com", "netlify.app", "vercel.app",
+    "pantheonsite.io", "readthedocs.io",
+]
+
+
+def check_subdomains(domain, homepage_html=""):
+    result = {"discovered": [], "error": None}
+    try:
+        req = urllib.request.Request(
+            f"https://crt.sh/?q=%.{domain}&output=json",
+            headers={"User-Agent": NORMAL_UA},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            entries = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
+        result["error"] = f"crt.sh lookup failed: {e}"
+        return result
+
+    names = set()
+    for entry in entries:
+        for name in entry.get("name_value", "").split("\n"):
+            name = name.strip().lower().lstrip("*.")
+            if name.endswith(domain) and name != domain:
+                names.add(name)
+
+    result["total_discovered"] = len(names)
+    checked = sorted(names)[:MAX_SUBDOMAINS_CHECKED]
+    result["checked_count"] = len(checked)
+    result["truncated"] = len(names) > MAX_SUBDOMAINS_CHECKED
+
+    for sub in checked:
+        entry = {"subdomain": sub}
+        entry["linked_from_homepage"] = sub in homepage_html
+
+        try:
+            proc = subprocess.run(
+                ["dig", "+short", "CNAME", sub],
+                capture_output=True, timeout=10, text=True,
+            )
+            cname = proc.stdout.strip().splitlines()[0].rstrip(".") if proc.stdout.strip() else None
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            cname = None
+        entry["cname"] = cname
+
+        try:
+            entry["resolves"] = bool(socket.getaddrinfo(sub, None, socket.AF_INET))
+        except OSError:
+            entry["resolves"] = False
+
+        entry["takeover_risk"] = bool(
+            cname and any(pattern in cname for pattern in TAKEOVER_PRONE_CNAME_PATTERNS)
+        )
+        result["discovered"].append(entry)
+
+    return result
+
+
+def render_report(domain, cloaking, robots, safe_browsing, pagespeed, security_headers, ssl_cert, dns, wp_exposure, subdomains):
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = []
     lines.append(f"# Recon report: {domain}")
@@ -377,6 +483,29 @@ def render_report(domain, cloaking, robots, safe_browsing, security_headers, ssl
         lines.append(f"- Verdict: **{verdict}**")
     lines.append("")
 
+    lines.append("## PageSpeed Insights")
+    if pagespeed is None:
+        lines.append(
+            "- Not checked (no API key). Manually check: "
+            f"https://pagespeed.web.dev/analysis?url=https://{domain}"
+        )
+    elif "error" in pagespeed:
+        lines.append(f"- ⚠️ API error: {pagespeed['error']}")
+    else:
+        lines.append(f"- Strategy: {pagespeed['strategy']}")
+        for name, score in pagespeed["categories"].items():
+            flag = "🚩" if score < 50 else ("🟡" if score < 90 else "✅")
+            lines.append(f"- {flag} {name}: {score}/100")
+        for label, value in pagespeed["metrics"].items():
+            lines.append(f"  - {label}: {value}")
+        lines.append(
+            "- Note: page speed (Core Web Vitals) is a confirmed Google "
+            "ranking factor — a slow page can suppress rankings even with "
+            "otherwise clean, well-optimized content. Low scores here are "
+            "worth fixing as part of search recovery, not just UX."
+        )
+    lines.append("")
+
     lines.append("## WordPress exposure")
     if "error" in wp_exposure:
         lines.append(f"- ⚠️ {wp_exposure['error']}")
@@ -438,6 +567,49 @@ def render_report(domain, cloaking, robots, safe_browsing, security_headers, ssl
     )
     lines.append("")
 
+    lines.append("## Subdomains (via certificate transparency logs)")
+    if subdomains.get("error"):
+        lines.append(f"- ⚠️ {subdomains['error']}")
+        lines.append(
+            f"- crt.sh is a free third-party service and occasionally returns "
+            f"502/404 errors on its end — retry later, or check manually: "
+            f"https://crt.sh/?q=%.{domain}"
+        )
+    elif not subdomains.get("total_discovered"):
+        lines.append("- No subdomains found in certificate transparency logs.")
+    else:
+        lines.append(
+            f"- {subdomains['total_discovered']} subdomain(s) found via crt.sh"
+            + (f" (showing first {subdomains['checked_count']})" if subdomains["truncated"] else "")
+            + "."
+        )
+        unlinked = [d for d in subdomains["discovered"] if not d["linked_from_homepage"]]
+        risky = [d for d in subdomains["discovered"] if d["takeover_risk"]]
+        for d in subdomains["discovered"]:
+            flags = []
+            if not d["linked_from_homepage"]:
+                flags.append("not linked from homepage")
+            if not d["resolves"]:
+                flags.append("does not resolve")
+            if d["takeover_risk"]:
+                flags.append(f"🚩 CNAME → {d['cname']} (takeover-prone pattern — verify still owned)")
+            suffix = f" — {', '.join(flags)}" if flags else " — ✅ linked, resolves"
+            lines.append(f"  - `{d['subdomain']}`{suffix}")
+        if risky:
+            lines.append(
+                "- 🚩 Subdomain(s) above point at a service pattern known for "
+                "takeover if abandoned. This is a heuristic, not a confirmed "
+                "vulnerability — verify the org still actively owns/uses that "
+                "service before treating it as urgent."
+            )
+        if unlinked and not risky:
+            lines.append(
+                "- Subdomains not linked from the homepage aren't necessarily a "
+                "problem (could be internal tools, reports, or old projects) — "
+                "worth a quick \"do you know what this is?\" with the org."
+            )
+    lines.append("")
+
     lines.append("## Manual checks — do these before the call (script can't automate)")
     lines.append(f"- [ ] Incognito: `site:{domain}` — scan every indexed URL for junk terms/languages")
     lines.append(f"- [ ] Incognito: search the org's name, note where they actually rank")
@@ -461,6 +633,17 @@ def main():
         default=os.environ.get("GOOGLE_SAFE_BROWSING_API_KEY"),
         help="Google Safe Browsing API key (or set GOOGLE_SAFE_BROWSING_API_KEY)",
     )
+    parser.add_argument(
+        "--pagespeed-key",
+        default=os.environ.get("GOOGLE_PAGESPEED_API_KEY"),
+        help="Google PageSpeed Insights API key (or set GOOGLE_PAGESPEED_API_KEY)",
+    )
+    parser.add_argument(
+        "--pagespeed-strategy",
+        default="mobile",
+        choices=["mobile", "desktop"],
+        help="PageSpeed strategy (default: mobile)",
+    )
     args = parser.parse_args()
 
     domain = args.domain.replace("https://", "").replace("http://", "").strip("/")
@@ -470,14 +653,17 @@ def main():
     cloaking = check_cloaking(domain, terms)
     robots = check_robots_and_sitemaps(domain, terms)
     safe_browsing = check_safe_browsing(domain, args.safe_browsing_key)
+    pagespeed = check_pagespeed(domain, args.pagespeed_key, args.pagespeed_strategy)
     security_headers = check_security_headers(domain)
     ssl_cert = check_ssl_certificate(domain)
     dns = check_dns(domain)
     wp_exposure = check_wp_exposure(domain)
+    _, homepage_html = fetch(f"https://{domain}/", NORMAL_UA)
+    subdomains = check_subdomains(domain, homepage_html or "")
 
     report = render_report(
-        domain, cloaking, robots, safe_browsing,
-        security_headers, ssl_cert, dns, wp_exposure,
+        domain, cloaking, robots, safe_browsing, pagespeed,
+        security_headers, ssl_cert, dns, wp_exposure, subdomains,
     )
 
     if args.output:

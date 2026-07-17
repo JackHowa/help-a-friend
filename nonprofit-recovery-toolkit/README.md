@@ -15,9 +15,17 @@ self-hosted by the nonprofit.
   recon checklist against a domain and produces a markdown report:
   cloaking check (Googlebot UA vs. normal UA diff), spam-term grep,
   robots.txt + sitemap fetch/analysis, optional Safe Browsing API check,
-  WordPress exposure (xmlrpc.php, user enumeration, exposed version),
-  security headers (CSP/HSTS/X-Frame-Options/X-Content-Type-Options),
-  SSL certificate issuer/validity, and DNS (A/MX/NS records).
+  optional PageSpeed Insights check, WordPress exposure (xmlrpc.php, user
+  enumeration, exposed version), security headers
+  (CSP/HSTS/X-Frame-Options/X-Content-Type-Options), SSL certificate
+  issuer/validity, DNS (A/MX/NS records), and subdomain discovery via
+  certificate transparency logs (flags subdomains not linked from the
+  homepage and CNAMEs pointing at takeover-prone service patterns).
+- `optimize_images.py` — standalone script: pass it one or more image
+  URLs (e.g. ones PageSpeed flags as oversized) and it downloads +
+  re-saves each as optimized JPEG and WebP, organized into
+  `original/`/`jpg/`/`webp/` folders. No resizing, so output is safe to
+  reuse anywhere the original was used.
 - `spam_terms.txt` — default wordlist for the spam grep (edit/extend freely,
   or point `--wordlist` at your own per-engagement list).
 - `templates/reconsideration_request.md` — fill-in-the-blanks Google
@@ -45,12 +53,30 @@ use a file, `export GOOGLE_SAFE_BROWSING_API_KEY=your-key-here` works too
 and takes priority over `.env`.
 
 Full walkthrough (GCP project setup, key restrictions, common 403 errors):
-[`docs/safe-browsing-api-setup.md`](docs/safe-browsing-api-setup.md).
+[`docs/safe-browsing-api-setup.md`](docs/safe-browsing-api-setup.md) — the
+same setup process works for a PageSpeed Insights key
+(`GOOGLE_PAGESPEED_API_KEY`), just enable "PageSpeed Insights API" instead
+of "Safe Browsing API" on the same project.
 
-No Python dependencies beyond the standard library. MX/NS lookups shell out
-to the `dig` binary (present by default on macOS/most Linux); if it's
-missing, those two fields just note how to check manually — everything
-else still runs fine.
+**Why bother with the PageSpeed check at all:** page speed (Core Web
+Vitals) is a confirmed Google ranking factor — a slow page can suppress
+search rankings even once a hack is otherwise fully cleaned up, which
+matters directly for the "why isn't my ranking recovering" conversation.
+
+To optimize any images PageSpeed flags as oversized:
+
+```bash
+python3 optimize_images.py --output findings/image-optimization \
+    https://their-domain.org/wp-content/uploads/big-photo.png
+```
+
+No Python dependencies beyond the standard library for `recon_check.py`;
+`optimize_images.py` needs Pillow (`pip3 install --user Pillow`). MX/NS
+lookups shell out to the `dig` binary (present by default on macOS/most
+Linux); if it's missing, those two fields just note how to check
+manually — everything else still runs fine. The subdomain check calls
+crt.sh (a free, occasionally-flaky third-party service) — if it 502s/404s,
+the report notes it and links the manual fallback instead of failing.
 
 ## What this does NOT automate (do these manually, they need a browser/login)
 
@@ -58,7 +84,7 @@ else still runs fine.
 - `site:domain.com` search in an incognito window (Google blocks scripted
   queries; do this by hand, 2 minutes)
 - Wayback Machine snapshot comparison around the hack date
-- PageSpeed Insights / backlink checker (free web UIs, quick to run by hand)
+- Free backlink checker (Ahrefs/Semrush free tier, browser-only)
 
 The script's report includes a checklist reminder for these so nothing gets
 missed before the call.
