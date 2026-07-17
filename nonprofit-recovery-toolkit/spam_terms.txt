@@ -1,0 +1,30 @@
+# Default spam-term wordlist for the recon checker.
+# One term per line, case-insensitive substring match. Lines starting with
+# # are ignored. Extend/copy this per-engagement if a hack left a distinctive
+# pattern (e.g. a specific pharma brand, a specific gambling site name).
+
+viagra
+cialis
+levitra
+tadalafil
+sildenafil
+casino
+gambling
+slot online
+judi online
+situs judi
+togel
+poker online
+bandar
+rolex replica
+replica watches
+payday loan
+cheap nfl jerseys
+free download crack
+warez
+adult dating
+xxx
+porn
+essay writing service
+buy backlinks
+seo services cheap
