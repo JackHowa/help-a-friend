@@ -3,3 +3,7 @@
 .DS_Store
 __pycache__/
 *.pyc
+
+# Per-engagement findings (recon reports, usernames, etc.) — never public
+nonprofit-recovery-toolkit/findings/
+*-recon-report.md
