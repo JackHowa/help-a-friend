@@ -30,7 +30,16 @@ already enabled on the project.
 2. Click into the new key to edit its restrictions:
    - **API restrictions:** select "Restrict key" → check **Safe Browsing
      API** only. (Limits the blast radius if the key ever leaks.)
-   - **Application restrictions:** set this to **None**.
+   - **Application restrictions:** set this to **None** for a quick local
+     dev key on your own machine.
+
+     ⚠️ **"None" means anyone who obtains this key can use it from
+     anywhere** — there's no restriction at all. That's an acceptable
+     tradeoff for a personal key you keep in a gitignored `.env` and never
+     share, but don't reuse a "None" key in anything that gets deployed,
+     shared with teammates, or run somewhere other than your own laptop.
+     For those cases use **IP addresses** instead, locked to the specific
+     machine(s)/CI runner(s) that will call the API (see below).
 
      ⚠️ **Do not use "HTTP referrers (websites)" here.** Referrer
      restrictions only work for requests made *from a browser*, where the
