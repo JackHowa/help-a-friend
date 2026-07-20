@@ -1,8 +1,9 @@
 # help-a-friend
 
-A reusable toolkit for volunteer engagements where a nonprofit's
-WordPress site has been hacked and needs help recovering its Google
-search standing — built during a real Catchafire volunteer engagement,
+A reusable toolkit for volunteer engagements helping nonprofits keep
+their websites secure — a proactive security checkup for a healthy site,
+or full recovery (including repairing the Google search fallout) for a
+hacked one. Built during a real Catchafire volunteer engagement,
 designed to be reused for any org by pointing it at a different domain.
 
 **[📖 Full documentation site](https://jackhowa.github.io/help-a-friend/)**

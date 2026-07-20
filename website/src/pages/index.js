@@ -33,7 +33,7 @@ export default function Home() {
   return (
     <Layout
       title={siteConfig.title}
-      description="Reusable tooling for volunteer engagements helping nonprofits recover from a WordPress hack and its Google search fallout.">
+      description="Reusable tooling for volunteers keeping nonprofit websites secure — proactive hardening checks and, when needed, hack recovery and search-standing repair.">
       <HomepageHeader />
       <main>
         <HomepageFeatures />

@@ -4,13 +4,14 @@ import styles from './styles.module.css';
 
 const FeatureList = [
   {
-    title: 'One-command recon',
+    title: 'One-command security checkup',
     Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
     description: (
       <>
-        Run <code>recon_check.py their-domain.org</code> and get a full
-        markdown report: cloaking, Safe Browsing, WordPress exposure,
-        security headers, SSL, DNS, and subdomain takeover risks.
+        Run <code>recon_check.py their-domain.org</code> against any
+        nonprofit's site — hacked or healthy — and get a full markdown
+        report: cloaking, Safe Browsing, WordPress exposure, security
+        headers, SSL, DNS, and subdomain takeover risks.
       </>
     ),
   },
@@ -21,18 +22,20 @@ const FeatureList = [
       <>
         Zero-dependency stdlib Python, gitignored per-engagement findings,
         and fill-in-the-blank templates — designed for a one-hour volunteer
-        call, reusable across every nonprofit you help next.
+        call, reusable across every nonprofit you help next, whether
+        you're hardening a healthy site or recovering a hacked one.
       </>
     ),
   },
   {
-    title: 'Recovery, not just diagnosis',
+    title: 'From finding to fix',
     Svg: require('@site/static/img/undraw_docusaurus_react.svg').default,
     description: (
       <>
-        Beyond detection: a reconsideration-request draft, a recovery
-        playbook, and an image optimizer to fix what PageSpeed flags —
-        everything you need to hand the org a finished plan.
+        Beyond detection: a hardening checklist, an image optimizer, and
+        (if a hack already happened) a recovery playbook and Google
+        reconsideration-request draft — everything you need to hand the
+        org a finished plan, not just a list of problems.
       </>
     ),
   },

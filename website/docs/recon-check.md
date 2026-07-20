@@ -4,9 +4,11 @@ sidebar_position: 2
 
 # recon_check.py
 
-Zero-dependency Python CLI (standard library only) that runs the
-automatable parts of a pre-call recon checklist against a domain and
-produces a markdown report.
+Zero-dependency Python CLI (standard library only) that runs a full
+security checkup against a domain and produces a markdown report. Works
+the same way whether the site is perfectly healthy (a proactive hardening
+review) or already compromised (a pre-call recon checklist) — the checks
+below matter in both cases.
 
 ## Usage
 

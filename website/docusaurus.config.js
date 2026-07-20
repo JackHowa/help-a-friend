@@ -10,8 +10,8 @@ import {themes as prismThemes} from 'prism-react-renderer';
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'Nonprofit Recovery Toolkit',
-  tagline: 'Reusable tooling for volunteers helping hacked nonprofit sites recover',
+  title: 'Nonprofit Website Security Toolkit',
+  tagline: 'Reusable tooling for volunteers keeping nonprofit websites secure',
   favicon: 'img/favicon.ico',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
@@ -66,9 +66,9 @@ const config = {
         respectPrefersColorScheme: true,
       },
       navbar: {
-        title: 'Nonprofit Recovery Toolkit',
+        title: 'Nonprofit Website Security Toolkit',
         logo: {
-          alt: 'Nonprofit Recovery Toolkit Logo',
+          alt: 'Nonprofit Website Security Toolkit Logo',
           src: 'img/logo.svg',
         },
         items: [
